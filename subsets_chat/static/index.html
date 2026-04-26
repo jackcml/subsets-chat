@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Subsets Chat Demo</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Subsets Chat</p>
+        <h1>Side-by-side feed simulator</h1>
+      </div>
+      <div class="status" id="status">Loading</div>
+    </header>
+
+    <main class="shell">
+      <section class="control-panel" aria-label="Chat controls">
+        <form class="inline-form" id="create-user-form">
+          <label for="display-name">New user</label>
+          <div class="input-row">
+            <input id="display-name" name="displayName" placeholder="Dana" autocomplete="off" />
+            <button type="submit">Add</button>
+          </div>
+        </form>
+
+        <form class="compose" id="compose-form">
+          <div class="field-grid">
+            <label>
+              Send as
+              <select id="author-select"></select>
+            </label>
+            <label>
+              Replying to
+              <input id="reply-context" readonly value="Broadcast" />
+            </label>
+          </div>
+          <textarea id="message-body" rows="3" placeholder="Write a global broadcast"></textarea>
+          <div class="actions">
+            <button type="button" id="clear-reply">Clear reply</button>
+            <button type="submit">Send</button>
+          </div>
+        </form>
+
+        <section>
+          <div class="section-heading">
+            <h2>Sets</h2>
+            <button type="button" id="seed-demo">Seed Alice, Bob, Charlie</button>
+          </div>
+          <div class="sets" id="sets"></div>
+        </section>
+      </section>
+
+      <section class="feeds-wrap" aria-label="Side-by-side feeds">
+        <div class="section-heading">
+          <h2>Feeds</h2>
+          <button type="button" id="refresh">Refresh</button>
+        </div>
+        <div class="feeds" id="feeds"></div>
+      </section>
+    </main>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

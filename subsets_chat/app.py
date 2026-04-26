@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from subsets_chat.db import ChatStore, NotFoundError, ValidationError
@@ -55,6 +57,8 @@ class ConnectionManager:
 
 
 def create_app(database_path: str | Path | None = None) -> FastAPI:
+    package_dir = Path(__file__).resolve().parent
+    static_dir = package_dir / "static"
     resolved_database_path: str | Path = (
         database_path
         if database_path is not None
@@ -70,9 +74,14 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
     )
     app.state.store = store
     app.state.connection_manager = manager
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     def get_store() -> ChatStore:
         return store
+
+    @app.get("/", include_in_schema=False)
+    def demo_page() -> FileResponse:
+        return FileResponse(static_dir / "index.html")
 
     @app.get("/health")
     def health() -> dict[str, str]:

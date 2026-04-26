@@ -10,6 +10,8 @@ python -m uvicorn subsets_chat.app:app --reload
 
 The service writes to `subsets.db` by default. Set `SUBSETS_CHAT_DB` to use a different SQLite path.
 
+Open `http://127.0.0.1:8000/` for the single-page demo. It includes user creation, set editing, message compose/reply controls, and side-by-side feeds for every local user.
+
 ## API
 
 - `GET /users`
