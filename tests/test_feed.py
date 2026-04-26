@@ -88,6 +88,28 @@ def test_reply_to_set_member_is_visible_with_parent_context(
     }
 
 
+def test_replies_are_hidden_when_any_ancestor_is_not_visible(store: ChatStore) -> None:
+    alice = store.create_user("Alice")["id"]
+    bob = store.create_user("Bob")["id"]
+    charlie = store.create_user("Charlie")["id"]
+    dana = store.create_user("Dana")["id"]
+    alice_root = store.create_message(alice, "root context")
+    charlie_to_alice = store.create_message(
+        charlie,
+        "hello friend",
+        reply_to_message_id=alice_root["id"],
+    )
+    store.create_message(bob, "downstream reply", reply_to_message_id=charlie_to_alice["id"])
+    store.replace_follow_set(dana, [bob, charlie])
+
+    assert feed_bodies(store, dana) == []
+    assert store.message_visible_to(dana, charlie_to_alice["id"]) is None
+
+    store.replace_follow_set(dana, [alice, bob, charlie])
+
+    assert feed_bodies(store, dana) == ["root context", "hello friend", "downstream reply"]
+
+
 def test_user_always_sees_their_own_messages(store: ChatStore, users: dict[str, int]) -> None:
     store.create_message(users["bob"], "bob root")
 

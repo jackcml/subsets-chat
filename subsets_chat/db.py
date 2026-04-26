@@ -196,12 +196,26 @@ class ChatStore:
         with self.session() as conn:
             rows = conn.execute(
                 """
-                WITH visible_authors AS (
+                WITH RECURSIVE visible_authors(user_id) AS (
                     SELECT ? AS user_id
                     UNION
                     SELECT followed_user_id
                     FROM follows
                     WHERE viewer_user_id = ?
+                ),
+                visible_messages(id) AS (
+                    SELECT id
+                    FROM messages
+                    WHERE reply_to_message_id IS NULL
+                      AND author_user_id IN (SELECT user_id FROM visible_authors)
+
+                    UNION
+
+                    SELECT child.id
+                    FROM messages AS child
+                    JOIN visible_messages AS parent_visible
+                        ON parent_visible.id = child.reply_to_message_id
+                    WHERE child.author_user_id IN (SELECT user_id FROM visible_authors)
                 )
                 SELECT
                     messages.id,
@@ -215,15 +229,11 @@ class ChatStore:
                     parent_author.display_name AS parent_author_display_name,
                     parent.body AS parent_body,
                     parent.created_at AS parent_created_at
-                FROM messages
+                FROM visible_messages
+                JOIN messages ON messages.id = visible_messages.id
                 JOIN users AS author ON author.id = messages.author_user_id
                 LEFT JOIN messages AS parent ON parent.id = messages.reply_to_message_id
                 LEFT JOIN users AS parent_author ON parent_author.id = parent.author_user_id
-                WHERE messages.author_user_id IN (SELECT user_id FROM visible_authors)
-                  AND (
-                      messages.reply_to_message_id IS NULL
-                      OR parent.author_user_id IN (SELECT user_id FROM visible_authors)
-                  )
                 ORDER BY messages.created_at, messages.id
                 """,
                 (viewer_user_id, viewer_user_id),
@@ -235,12 +245,26 @@ class ChatStore:
         with self.session() as conn:
             row = conn.execute(
                 """
-                WITH visible_authors AS (
+                WITH RECURSIVE visible_authors(user_id) AS (
                     SELECT ? AS user_id
                     UNION
                     SELECT followed_user_id
                     FROM follows
                     WHERE viewer_user_id = ?
+                ),
+                visible_messages(id) AS (
+                    SELECT id
+                    FROM messages
+                    WHERE reply_to_message_id IS NULL
+                      AND author_user_id IN (SELECT user_id FROM visible_authors)
+
+                    UNION
+
+                    SELECT child.id
+                    FROM messages AS child
+                    JOIN visible_messages AS parent_visible
+                        ON parent_visible.id = child.reply_to_message_id
+                    WHERE child.author_user_id IN (SELECT user_id FROM visible_authors)
                 )
                 SELECT
                     messages.id,
@@ -254,16 +278,12 @@ class ChatStore:
                     parent_author.display_name AS parent_author_display_name,
                     parent.body AS parent_body,
                     parent.created_at AS parent_created_at
-                FROM messages
+                FROM visible_messages
+                JOIN messages ON messages.id = visible_messages.id
                 JOIN users AS author ON author.id = messages.author_user_id
                 LEFT JOIN messages AS parent ON parent.id = messages.reply_to_message_id
                 LEFT JOIN users AS parent_author ON parent_author.id = parent.author_user_id
                 WHERE messages.id = ?
-                  AND messages.author_user_id IN (SELECT user_id FROM visible_authors)
-                  AND (
-                      messages.reply_to_message_id IS NULL
-                      OR parent.author_user_id IN (SELECT user_id FROM visible_authors)
-                  )
                 """,
                 (viewer_user_id, viewer_user_id, message_id),
             ).fetchone()
