@@ -2,17 +2,31 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 
+from subsets_chat.auth import (
+    AuthError,
+    create_access_token,
+    decode_access_token,
+    hash_password,
+    resolve_secret_key,
+    unauthorized,
+    verify_password,
+)
 from subsets_chat.db import ChatStore, NotFoundError, ValidationError
 
 
-class CreateUserRequest(BaseModel):
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
+
+
+class RegisterRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=80)
     display_name: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=1, max_length=4000)
 
 
 class ReplaceSetRequest(BaseModel):
@@ -20,7 +34,6 @@ class ReplaceSetRequest(BaseModel):
 
 
 class CreateMessageRequest(BaseModel):
-    author_user_id: int
     body: str = Field(min_length=1, max_length=4000)
     reply_to_message_id: int | None = None
 
@@ -30,8 +43,7 @@ class ConnectionManager:
         self.store = store
         self.connections: list[tuple[int, WebSocket]] = []
 
-    async def connect(self, viewer_id: int, websocket: WebSocket) -> None:
-        await websocket.accept()
+    def connect(self, viewer_id: int, websocket: WebSocket) -> None:
         self.connections.append((viewer_id, websocket))
 
     def disconnect(self, websocket: WebSocket) -> None:
@@ -57,8 +69,6 @@ class ConnectionManager:
 
 
 def create_app(database_path: str | Path | None = None) -> FastAPI:
-    package_dir = Path(__file__).resolve().parent
-    static_dir = package_dir / "static"
     resolved_database_path: str | Path = (
         database_path
         if database_path is not None
@@ -66,6 +76,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
     )
     store = ChatStore(resolved_database_path)
     manager = ConnectionManager(store)
+    secret_key = resolve_secret_key()
 
     app = FastAPI(
         title="Subsets Chat",
@@ -74,51 +85,94 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
     )
     app.state.store = store
     app.state.connection_manager = manager
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     def get_store() -> ChatStore:
         return store
 
+    def user_for_token(token: str) -> dict[str, Any]:
+        try:
+            user_id = decode_access_token(token, secret_key)
+            return store.get_user(user_id)
+        except (AuthError, NotFoundError) as exc:
+            raise unauthorized() from exc
+
+    def current_user(token: str = Depends(oauth2_scheme)) -> dict[str, Any]:
+        return user_for_token(token)
+
+    def token_response(user: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "access_token": create_access_token(user["id"], secret_key),
+            "token_type": "bearer",
+            "user": user,
+        }
+
     @app.get("/", include_in_schema=False)
-    def demo_page() -> FileResponse:
-        return FileResponse(static_dir / "index.html")
+    def api_root() -> dict[str, str]:
+        return {"name": "Subsets Chat API"}
 
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.get("/users")
-    def list_users(chat_store: ChatStore = Depends(get_store)) -> list[dict]:
-        return chat_store.list_users()
-
-    @app.post("/users", status_code=201)
-    def create_user(
-        request: CreateUserRequest,
+    @app.post("/auth/register", status_code=201)
+    def register(
+        request: RegisterRequest,
         chat_store: ChatStore = Depends(get_store),
-    ) -> dict:
+    ) -> dict[str, Any]:
         try:
-            return chat_store.create_user(request.display_name)
+            user = chat_store.create_user(
+                username=request.username,
+                display_name=request.display_name,
+                password_hash=hash_password(request.password),
+            )
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return token_response(user)
 
-    @app.get("/users/{user_id}/set")
-    def get_follow_set(
-        user_id: int,
+    @app.post("/auth/token")
+    def login(
+        form_data: OAuth2PasswordRequestForm = Depends(),
         chat_store: ChatStore = Depends(get_store),
-    ) -> list[dict]:
-        try:
-            return chat_store.get_follow_set(user_id)
-        except NotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    ) -> dict[str, Any]:
+        user = chat_store.get_user_by_username(form_data.username)
+        if user is None or not verify_password(form_data.password, user["password_hash"]):
+            raise unauthorized("Incorrect username or password")
+        return token_response(
+            {
+                "id": user["id"],
+                "username": user["username"],
+                "display_name": user["display_name"],
+                "created_at": user["created_at"],
+            }
+        )
 
-    @app.put("/users/{user_id}/set")
-    def replace_follow_set(
-        user_id: int,
+    @app.get("/me")
+    def me(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+        return user
+
+    @app.get("/users")
+    def list_users(
+        user: dict[str, Any] = Depends(current_user),
+        chat_store: ChatStore = Depends(get_store),
+    ) -> list[dict[str, Any]]:
+        _ = user
+        return chat_store.list_users()
+
+    @app.get("/me/set")
+    def get_my_follow_set(
+        user: dict[str, Any] = Depends(current_user),
+        chat_store: ChatStore = Depends(get_store),
+    ) -> list[dict[str, Any]]:
+        return chat_store.get_follow_set(user["id"])
+
+    @app.put("/me/set")
+    def replace_my_follow_set(
         request: ReplaceSetRequest,
+        user: dict[str, Any] = Depends(current_user),
         chat_store: ChatStore = Depends(get_store),
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         try:
-            return chat_store.replace_follow_set(user_id, request.followed_user_ids)
+            return chat_store.replace_follow_set(user["id"], request.followed_user_ids)
         except NotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValidationError as exc:
@@ -127,11 +181,12 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
     @app.post("/messages", status_code=201)
     async def create_message(
         request: CreateMessageRequest,
+        user: dict[str, Any] = Depends(current_user),
         chat_store: ChatStore = Depends(get_store),
-    ) -> dict:
+    ) -> dict[str, Any]:
         try:
             message = chat_store.create_message(
-                author_user_id=request.author_user_id,
+                author_user_id=user["id"],
                 body=request.body,
                 reply_to_message_id=request.reply_to_message_id,
             )
@@ -145,26 +200,26 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
 
     @app.get("/feed")
     def get_feed(
-        viewer_id: int = Query(gt=0),
+        user: dict[str, Any] = Depends(current_user),
         chat_store: ChatStore = Depends(get_store),
-    ) -> list[dict]:
-        try:
-            return chat_store.get_feed(viewer_id)
-        except NotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    ) -> list[dict[str, Any]]:
+        return chat_store.get_feed(user["id"])
 
     @app.websocket("/ws")
-    async def websocket_feed(
-        websocket: WebSocket,
-        viewer_id: int = Query(gt=0),
-    ) -> None:
+    async def websocket_feed(websocket: WebSocket) -> None:
+        await websocket.accept()
         try:
-            store.ensure_user_exists(viewer_id)
-        except NotFoundError:
+            auth_message = await websocket.receive_json()
+            token = auth_message.get("access_token")
+            if auth_message.get("type") != "auth" or not isinstance(token, str):
+                await websocket.close(code=1008)
+                return
+            user = user_for_token(token)
+        except Exception:
             await websocket.close(code=1008)
             return
 
-        await manager.connect(viewer_id, websocket)
+        manager.connect(user["id"], websocket)
         try:
             while True:
                 await websocket.receive_text()

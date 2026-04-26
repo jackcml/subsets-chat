@@ -12,7 +12,9 @@ PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL COLLATE NOCASE UNIQUE,
     display_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -61,35 +63,119 @@ class ChatStore:
 
     def initialize(self) -> None:
         with self.session() as conn:
+            self._reset_incompatible_schema(conn)
             conn.executescript(SCHEMA)
+
+    def _reset_incompatible_schema(self, conn: sqlite3.Connection) -> None:
+        user_columns = conn.execute("PRAGMA table_info(users)").fetchall()
+        if not user_columns:
+            return
+
+        column_names = {row["name"] for row in user_columns}
+        expected_columns = {"id", "username", "display_name", "password_hash", "created_at"}
+        if expected_columns.issubset(column_names):
+            return
+
+        conn.executescript(
+            """
+            DROP TABLE IF EXISTS follows;
+            DROP TABLE IF EXISTS messages;
+            DROP TABLE IF EXISTS users;
+            """
+        )
 
     def list_users(self) -> list[dict[str, Any]]:
         with self.session() as conn:
             rows = conn.execute(
-                "SELECT id, display_name, created_at FROM users ORDER BY id"
+                """
+                SELECT id, username, display_name, created_at
+                FROM users
+                ORDER BY display_name COLLATE NOCASE, id
+                """
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def create_user(self, display_name: str) -> dict[str, Any]:
+    def create_user(self, username: str, display_name: str, password_hash: str) -> dict[str, Any]:
+        normalized_username = self.normalize_username(username)
         normalized = display_name.strip()
+        if not normalized_username:
+            raise ValidationError("username must not be empty")
         if not normalized:
             raise ValidationError("display_name must not be empty")
+        if not password_hash:
+            raise ValidationError("password_hash must not be empty")
 
-        with self.session() as conn:
-            cursor = conn.execute(
-                "INSERT INTO users (display_name) VALUES (?)",
-                (normalized,),
-            )
-            user_id = cursor.lastrowid
-            if user_id is None:
-                raise NotFoundError("created user id could not be loaded")
-            row = conn.execute(
-                "SELECT id, display_name, created_at FROM users WHERE id = ?",
-                (user_id,),
-            ).fetchone()
+        try:
+            with self.session() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO users (username, display_name, password_hash)
+                    VALUES (?, ?, ?)
+                    """,
+                    (normalized_username, normalized, password_hash),
+                )
+                user_id = cursor.lastrowid
+                if user_id is None:
+                    raise NotFoundError("created user id could not be loaded")
+                row = self._fetch_public_user_row(conn, user_id)
+        except sqlite3.IntegrityError as exc:
+            raise ValidationError("username is already taken") from exc
+
         if row is None:
             raise NotFoundError("created user could not be loaded")
         return dict(row)
+
+    def get_user(self, user_id: int) -> dict[str, Any]:
+        with self.session() as conn:
+            row = self._fetch_public_user_row(conn, user_id)
+        if row is None:
+            raise NotFoundError(f"user {user_id} does not exist")
+        return dict(row)
+
+    def get_user_with_password_hash(self, user_id: int) -> dict[str, Any]:
+        with self.session() as conn:
+            row = conn.execute(
+                """
+                SELECT id, username, display_name, password_hash, created_at
+                FROM users
+                WHERE id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        if row is None:
+            raise NotFoundError(f"user {user_id} does not exist")
+        return dict(row)
+
+    def get_user_by_username(self, username: str) -> dict[str, Any] | None:
+        normalized_username = self.normalize_username(username)
+        if not normalized_username:
+            return None
+        with self.session() as conn:
+            row = conn.execute(
+                """
+                SELECT id, username, display_name, password_hash, created_at
+                FROM users
+                WHERE username = ?
+                """,
+                (normalized_username,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def _fetch_public_user_row(
+        self, conn: sqlite3.Connection, user_id: int
+    ) -> sqlite3.Row | None:
+        return conn.execute(
+            """
+            SELECT id, username, display_name, created_at
+            FROM users
+            WHERE id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+
+    @staticmethod
+    def normalize_username(username: str) -> str:
+        return username.strip().lower()
 
     def ensure_user_exists(self, user_id: int) -> None:
         with self.session() as conn:
@@ -102,7 +188,7 @@ class ChatStore:
         with self.session() as conn:
             rows = conn.execute(
                 """
-                SELECT users.id, users.display_name, users.created_at
+                SELECT users.id, users.username, users.display_name, users.created_at
                 FROM follows
                 JOIN users ON users.id = follows.followed_user_id
                 WHERE follows.viewer_user_id = ?

@@ -7,6 +7,14 @@ import pytest
 from subsets_chat.db import ChatStore
 
 
+def create_test_user(store: ChatStore, name: str) -> int:
+    return store.create_user(
+        username=name,
+        display_name=name,
+        password_hash=f"hashed-{name}",
+    )["id"]
+
+
 @pytest.fixture()
 def store() -> Generator[ChatStore]:
     database_path = Path(f"test-feed-{uuid4().hex}.db")
@@ -24,9 +32,9 @@ def store() -> Generator[ChatStore]:
 @pytest.fixture()
 def users(store: ChatStore) -> dict[str, int]:
     return {
-        "alice": store.create_user("Alice")["id"],
-        "bob": store.create_user("Bob")["id"],
-        "charlie": store.create_user("Charlie")["id"],
+        "alice": create_test_user(store, "Alice"),
+        "bob": create_test_user(store, "Bob"),
+        "charlie": create_test_user(store, "Charlie"),
     }
 
 
@@ -90,10 +98,10 @@ def test_reply_to_set_member_is_visible_with_parent_context(
 
 
 def test_replies_are_hidden_when_any_ancestor_is_not_visible(store: ChatStore) -> None:
-    alice = store.create_user("Alice")["id"]
-    bob = store.create_user("Bob")["id"]
-    charlie = store.create_user("Charlie")["id"]
-    dana = store.create_user("Dana")["id"]
+    alice = create_test_user(store, "Alice")
+    bob = create_test_user(store, "Bob")
+    charlie = create_test_user(store, "Charlie")
+    dana = create_test_user(store, "Dana")
     alice_root = store.create_message(alice, "root context")
     charlie_to_alice = store.create_message(
         charlie,
