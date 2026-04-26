@@ -2,7 +2,6 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -25,7 +24,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
   const [user, setUser] = useState<UserResponse | null>(null)
   const queryClient = useQueryClient()
-  const hydratedRef = useRef(false)
 
   const clearSession = useCallback(() => {
     setStoredToken(null)
@@ -35,8 +33,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [queryClient])
 
   useEffect(() => {
-    if (hydratedRef.current) return
-    hydratedRef.current = true
     const token = getStoredToken()
     if (!token) return
 
