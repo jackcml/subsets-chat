@@ -12,6 +12,13 @@ export type MessageResponse = Schemas['MessageResponse']
 export type WebSocketServerMessage =
   | { type: 'message'; message: FeedMessageResponse }
   | { type: 'user_joined'; user: UserResponse }
+  | { type: 'presence_init'; user_ids: number[] }
+  | { type: 'user_online'; user_id: number }
+  | { type: 'user_offline'; user_id: number }
+
+export const PRESENCE_QUERY_KEY = ['presence', 'online'] as const
+
+export type PresenceSet = ReadonlySet<number>
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'

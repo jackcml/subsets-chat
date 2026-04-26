@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   buildWebSocketUrl,
+  PRESENCE_QUERY_KEY,
   type FeedMessageResponse,
   type UserResponse,
   type WebSocketServerMessage,
@@ -68,6 +69,30 @@ export function useFeedSocket(token: string | null): void {
       )
     }
 
+    const setPresence = (updater: (current: Set<number>) => Set<number>) => {
+      queryClient.setQueryData<Set<number>>(PRESENCE_QUERY_KEY, (current) =>
+        updater(new Set(current ?? []))
+      )
+    }
+
+    const handlePresenceInit = (userIds: number[]) => {
+      queryClient.setQueryData<Set<number>>(PRESENCE_QUERY_KEY, new Set(userIds))
+    }
+
+    const handleUserOnline = (userId: number) => {
+      setPresence((next) => {
+        next.add(userId)
+        return next
+      })
+    }
+
+    const handleUserOffline = (userId: number) => {
+      setPresence((next) => {
+        next.delete(userId)
+        return next
+      })
+    }
+
     const connect = () => {
       if (cancelled) return
       const next = new WebSocket(buildWebSocketUrl())
@@ -90,6 +115,12 @@ export function useFeedSocket(token: string | null): void {
             handleMessage(payload.message)
           } else if (payload.type === 'user_joined' && payload.user) {
             handleUserJoined(payload.user)
+          } else if (payload.type === 'presence_init') {
+            handlePresenceInit(payload.user_ids)
+          } else if (payload.type === 'user_online') {
+            handleUserOnline(payload.user_id)
+          } else if (payload.type === 'user_offline') {
+            handleUserOffline(payload.user_id)
           }
         } catch {
           // Ignore malformed frames
@@ -98,6 +129,7 @@ export function useFeedSocket(token: string | null): void {
 
       next.addEventListener('close', () => {
         clearTimers()
+        queryClient.setQueryData<Set<number>>(PRESENCE_QUERY_KEY, new Set())
         if (cancelled) return
         const delay = Math.min(
           RECONNECT_MAX_MS,

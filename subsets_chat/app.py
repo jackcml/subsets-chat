@@ -100,20 +100,51 @@ class WebSocketUserJoinedResponse(BaseModel):
     user: UserResponse
 
 
+class WebSocketPresenceInitResponse(BaseModel):
+    type: str
+    user_ids: list[int]
+
+
+class WebSocketUserPresenceResponse(BaseModel):
+    type: str
+    user_id: int
+
+
 class ConnectionManager:
     def __init__(self, store: ChatStore):
         self.store = store
         self.connections: list[tuple[int, WebSocket]] = []
 
-    def connect(self, viewer_id: int, websocket: WebSocket) -> None:
-        self.connections.append((viewer_id, websocket))
+    def online_user_ids(self) -> list[int]:
+        seen: set[int] = set()
+        ordered: list[int] = []
+        for viewer_id, _ in self.connections:
+            if viewer_id in seen:
+                continue
+            seen.add(viewer_id)
+            ordered.append(viewer_id)
+        return ordered
 
-    def disconnect(self, websocket: WebSocket) -> None:
+    def connect(self, viewer_id: int, websocket: WebSocket) -> bool:
+        already_online = any(vid == viewer_id for vid, _ in self.connections)
+        self.connections.append((viewer_id, websocket))
+        return not already_online
+
+    def disconnect(self, websocket: WebSocket) -> tuple[int | None, bool]:
+        departing_user_id: int | None = None
+        for viewer_id, connection in self.connections:
+            if connection is websocket:
+                departing_user_id = viewer_id
+                break
         self.connections = [
             (viewer_id, connection)
             for viewer_id, connection in self.connections
             if connection is not websocket
         ]
+        if departing_user_id is None:
+            return None, False
+        still_online = any(vid == departing_user_id for vid, _ in self.connections)
+        return departing_user_id, still_online
 
     async def broadcast_message(self, message_id: int) -> None:
         stale_connections: list[WebSocket] = []
@@ -130,10 +161,27 @@ class ConnectionManager:
             self.disconnect(websocket)
 
     async def broadcast_user_joined(self, user: dict[str, Any]) -> None:
+        await self._broadcast_payload({"type": "user_joined", "user": user})
+
+    async def broadcast_user_online(self, user_id: int) -> None:
+        await self._broadcast_payload({"type": "user_online", "user_id": user_id})
+
+    async def broadcast_user_offline(self, user_id: int) -> None:
+        await self._broadcast_payload({"type": "user_offline", "user_id": user_id})
+
+    async def send_presence_init(self, websocket: WebSocket) -> None:
+        try:
+            await websocket.send_json(
+                {"type": "presence_init", "user_ids": self.online_user_ids()}
+            )
+        except RuntimeError:
+            self.disconnect(websocket)
+
+    async def _broadcast_payload(self, payload: dict[str, Any]) -> None:
         stale_connections: list[WebSocket] = []
         for _, websocket in list(self.connections):
             try:
-                await websocket.send_json({"type": "user_joined", "user": user})
+                await websocket.send_json(payload)
             except RuntimeError:
                 stale_connections.append(websocket)
 
@@ -303,12 +351,17 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
             await websocket.close(code=1008)
             return
 
-        manager.connect(user["id"], websocket)
+        first_connection = manager.connect(user["id"], websocket)
+        await manager.send_presence_init(websocket)
+        if first_connection:
+            await manager.broadcast_user_online(user["id"])
         try:
             while True:
                 await websocket.receive_text()
         except WebSocketDisconnect:
-            manager.disconnect(websocket)
+            departing_user_id, still_online = manager.disconnect(websocket)
+            if departing_user_id is not None and not still_online:
+                await manager.broadcast_user_offline(departing_user_id)
 
     return app
 

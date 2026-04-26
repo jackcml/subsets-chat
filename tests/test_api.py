@@ -163,6 +163,10 @@ def test_websocket_authenticates_with_initial_message(client: TestClient) -> Non
 
     with client.websocket_connect("/ws") as websocket:
         websocket.send_json({"type": "auth", "access_token": bob_payload["access_token"]})
+        presence = websocket.receive_json()
+        assert presence["type"] == "presence_init"
+        assert presence["user_ids"] == [bob_payload["user"]["id"]]
+
         response = client.post(
             "/messages",
             json={"body": "visible to bob"},
@@ -171,6 +175,8 @@ def test_websocket_authenticates_with_initial_message(client: TestClient) -> Non
         assert response.status_code == 201
 
         pushed = websocket.receive_json()
+        while pushed.get("type") != "message":
+            pushed = websocket.receive_json()
 
     assert pushed["type"] == "message"
     assert pushed["message"]["body"] == "visible to bob"
@@ -184,6 +190,9 @@ def test_websocket_uses_updated_set_for_future_messages(client: TestClient) -> N
 
     with client.websocket_connect("/ws") as websocket:
         websocket.send_json({"type": "auth", "access_token": bob_payload["access_token"]})
+        presence = websocket.receive_json()
+        assert presence["type"] == "presence_init"
+
         set_response = client.put(
             "/me/set",
             json={"followed_user_ids": [alice_payload["user"]["id"]]},
@@ -199,8 +208,48 @@ def test_websocket_uses_updated_set_for_future_messages(client: TestClient) -> N
         assert message_response.status_code == 201
 
         pushed = websocket.receive_json()
+        while pushed.get("type") != "message":
+            pushed = websocket.receive_json()
 
     assert pushed["message"]["body"] == "visible after set update"
+
+
+def test_websocket_emits_presence_events(client: TestClient) -> None:
+    alice_payload = register_user(client, "alice", "Alice")
+    bob_payload = register_user(client, "bob", "Bob")
+
+    with client.websocket_connect("/ws") as alice_ws:
+        alice_ws.send_json({"type": "auth", "access_token": alice_payload["access_token"]})
+        alice_init = alice_ws.receive_json()
+        assert alice_init["type"] == "presence_init"
+        assert alice_init["user_ids"] == [alice_payload["user"]["id"]]
+
+        alice_self_online = alice_ws.receive_json()
+        assert alice_self_online == {
+            "type": "user_online",
+            "user_id": alice_payload["user"]["id"],
+        }
+
+        with client.websocket_connect("/ws") as bob_ws:
+            bob_ws.send_json({"type": "auth", "access_token": bob_payload["access_token"]})
+            bob_init = bob_ws.receive_json()
+            assert bob_init["type"] == "presence_init"
+            assert set(bob_init["user_ids"]) == {
+                alice_payload["user"]["id"],
+                bob_payload["user"]["id"],
+            }
+
+            alice_saw_bob_online = alice_ws.receive_json()
+            assert alice_saw_bob_online == {
+                "type": "user_online",
+                "user_id": bob_payload["user"]["id"],
+            }
+
+        alice_saw_bob_offline = alice_ws.receive_json()
+        assert alice_saw_bob_offline == {
+            "type": "user_offline",
+            "user_id": bob_payload["user"]["id"],
+        }
 
 
 def test_websocket_rejects_missing_or_invalid_auth(client: TestClient) -> None:
