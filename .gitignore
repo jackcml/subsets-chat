@@ -6,3 +6,4 @@
 .pytest-tmp/
 pytest-cache-files-*/
 __pycache__/
+.claude/
