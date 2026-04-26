@@ -48,6 +48,53 @@ class CreateMessageRequest(BaseModel):
     reply_to_message_id: int | None = None
 
 
+class ApiRootResponse(BaseModel):
+    name: str
+
+
+class HealthResponse(BaseModel):
+    status: str
+
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    display_name: str
+    created_at: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str
+    user: UserResponse
+
+
+class MessageResponse(BaseModel):
+    id: int
+    author_user_id: int
+    author_display_name: str
+    body: str
+    reply_to_message_id: int | None
+    created_at: str
+
+
+class FeedReplyResponse(BaseModel):
+    id: int
+    author_user_id: int
+    author_display_name: str
+    body: str
+    created_at: str
+
+
+class FeedMessageResponse(MessageResponse):
+    reply_to: FeedReplyResponse | None
+
+
+class WebSocketMessageResponse(BaseModel):
+    type: str
+    message: FeedMessageResponse
+
+
 class ConnectionManager:
     def __init__(self, store: ChatStore):
         self.store = store
@@ -126,15 +173,15 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
             "user": user,
         }
 
-    @app.get("/", include_in_schema=False)
+    @app.get("/", include_in_schema=False, response_model=ApiRootResponse)
     def api_root() -> dict[str, str]:
         return {"name": "Subsets Chat API"}
 
-    @app.get("/health")
+    @app.get("/health", response_model=HealthResponse)
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.post("/auth/register", status_code=201)
+    @app.post("/auth/register", status_code=201, response_model=TokenResponse)
     def register(
         request: RegisterRequest,
         chat_store: ChatStore = Depends(get_store),
@@ -149,7 +196,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return token_response(user)
 
-    @app.post("/auth/token")
+    @app.post("/auth/token", response_model=TokenResponse)
     def login(
         form_data: OAuth2PasswordRequestForm = Depends(),
         chat_store: ChatStore = Depends(get_store),
@@ -166,11 +213,11 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
             }
         )
 
-    @app.get("/me")
+    @app.get("/me", response_model=UserResponse)
     def me(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
         return user
 
-    @app.get("/users")
+    @app.get("/users", response_model=list[UserResponse])
     def list_users(
         user: dict[str, Any] = Depends(current_user),
         chat_store: ChatStore = Depends(get_store),
@@ -178,14 +225,14 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
         _ = user
         return chat_store.list_users()
 
-    @app.get("/me/set")
+    @app.get("/me/set", response_model=list[UserResponse])
     def get_my_follow_set(
         user: dict[str, Any] = Depends(current_user),
         chat_store: ChatStore = Depends(get_store),
     ) -> list[dict[str, Any]]:
         return chat_store.get_follow_set(user["id"])
 
-    @app.put("/me/set")
+    @app.put("/me/set", response_model=list[UserResponse])
     def replace_my_follow_set(
         request: ReplaceSetRequest,
         user: dict[str, Any] = Depends(current_user),
@@ -198,7 +245,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.post("/messages", status_code=201)
+    @app.post("/messages", status_code=201, response_model=MessageResponse)
     async def create_message(
         request: CreateMessageRequest,
         user: dict[str, Any] = Depends(current_user),
@@ -218,7 +265,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
         await manager.broadcast_message(message["id"])
         return message
 
-    @app.get("/feed")
+    @app.get("/feed", response_model=list[FeedMessageResponse])
     def get_feed(
         user: dict[str, Any] = Depends(current_user),
         chat_store: ChatStore = Depends(get_store),
