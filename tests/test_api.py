@@ -3,10 +3,12 @@ from __future__ import annotations
 from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 import jwt
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from subsets_chat.app import create_app
@@ -56,7 +58,8 @@ def test_registration_hashes_password_and_returns_token(client: TestClient) -> N
     assert payload["token_type"] == "bearer"
     assert payload["access_token"]
     assert payload["user"]["username"] == "alice"
-    stored_user = client.app.state.store.get_user_by_username("alice")
+    app = cast(FastAPI, client.app)
+    stored_user = app.state.store.get_user_by_username("alice")
     assert stored_user is not None
     assert stored_user["password_hash"] != "secret"
 
@@ -205,3 +208,52 @@ def test_websocket_rejects_missing_or_invalid_auth(client: TestClient) -> None:
         websocket.send_json({"type": "auth", "access_token": "not-a-token"})
         with pytest.raises(Exception):
             websocket.receive_json()
+
+
+def test_configured_cors_allows_preflight_with_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    origin = "http://localhost:5173"
+    monkeypatch.setenv(
+        "SUBSETS_CHAT_ALLOWED_ORIGINS",
+        f"{origin}, http://127.0.0.1:5173",
+    )
+    database_path = Path(f"test-cors-{uuid4().hex}.db")
+    try:
+        app = create_app(database_path)
+        cors_client = TestClient(app)
+
+        response = cors_client.options(
+            "/feed",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "authorization",
+            },
+        )
+    finally:
+        database_path.unlink(missing_ok=True)
+
+    assert response.status_code in {200, 204}
+    assert response.headers["access-control-allow-origin"] == origin
+    assert "authorization" in response.headers["access-control-allow-headers"].lower()
+
+
+def test_unconfigured_cors_does_not_emit_allow_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SUBSETS_CHAT_ALLOWED_ORIGINS", raising=False)
+    database_path = Path(f"test-no-cors-{uuid4().hex}.db")
+    try:
+        app = create_app(database_path)
+        cors_client = TestClient(app)
+
+        response = cors_client.get(
+            "/health",
+            headers={"Origin": "http://localhost:5173"},
+        )
+    finally:
+        database_path.unlink(missing_ok=True)
+
+    assert response.status_code == 200
+    assert "access-control-allow-origin" not in response.headers

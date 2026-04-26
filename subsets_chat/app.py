@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 
@@ -21,6 +22,15 @@ from subsets_chat.db import ChatStore, NotFoundError, ValidationError
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
+
+
+def allowed_origins_from_env() -> list[str]:
+    configured_origins = os.getenv("SUBSETS_CHAT_ALLOWED_ORIGINS", "")
+    return [
+        origin.strip()
+        for origin in configured_origins.split(",")
+        if origin.strip()
+    ]
 
 
 class RegisterRequest(BaseModel):
@@ -85,6 +95,16 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
     )
     app.state.store = store
     app.state.connection_manager = manager
+
+    allowed_origins = allowed_origins_from_env()
+    if allowed_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=allowed_origins,
+            allow_methods=["*"],
+            allow_headers=["*"],
+            allow_credentials=False,
+        )
 
     def get_store() -> ChatStore:
         return store

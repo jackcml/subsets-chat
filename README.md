@@ -10,6 +10,16 @@ python -m uvicorn subsets_chat.app:app --reload
 
 The service writes to `subsets.db` by default. Set `SUBSETS_CHAT_DB` to use a different SQLite path. Set `SUBSETS_CHAT_SECRET_KEY` outside local dev/test environments.
 
+When the frontend is served from a different origin than FastAPI, opt in to CORS for that frontend origin:
+
+```bash
+SUBSETS_CHAT_ALLOWED_ORIGINS="http://localhost:5173"
+```
+
+Multiple allowed origins are comma-separated, for example
+`SUBSETS_CHAT_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173`.
+If `SUBSETS_CHAT_ALLOWED_ORIGINS` is not set, browser cross-origin calls are not allowed by default.
+
 ## API
 
 - `POST /auth/register` with `{ "username": "alice", "display_name": "Alice", "password": "secret" }`
