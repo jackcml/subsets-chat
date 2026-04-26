@@ -1,5 +1,6 @@
 from pathlib import Path
 from uuid import uuid4
+from collections.abc import Generator
 
 import pytest
 
@@ -7,7 +8,7 @@ from subsets_chat.db import ChatStore
 
 
 @pytest.fixture()
-def store() -> ChatStore:
+def store() -> Generator[ChatStore]:
     database_path = Path(f"test-feed-{uuid4().hex}.db")
     try:
         yield ChatStore(database_path)

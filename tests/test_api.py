@@ -1,5 +1,6 @@
 from pathlib import Path
 from uuid import uuid4
+from collections.abc import Generator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,7 +9,7 @@ from subsets_chat.app import create_app
 
 
 @pytest.fixture()
-def client() -> TestClient:
+def client() -> Generator[TestClient]:
     database_path = Path(f"test-api-{uuid4().hex}.db")
     try:
         app = create_app(database_path)
