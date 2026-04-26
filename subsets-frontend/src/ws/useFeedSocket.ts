@@ -3,10 +3,12 @@ import { useQueryClient } from '@tanstack/react-query'
 import {
   buildWebSocketUrl,
   type FeedMessageResponse,
+  type UserResponse,
   type WebSocketServerMessage,
 } from '@/api/client'
 
 const FEED_QUERY_KEY = ['get', '/feed'] as const
+const USERS_QUERY_KEY = ['get', '/users'] as const
 const PING_INTERVAL_MS = 30_000
 const RECONNECT_BASE_MS = 1_000
 const RECONNECT_MAX_MS = 30_000
@@ -50,6 +52,22 @@ export function useFeedSocket(token: string | null): void {
       )
     }
 
+    const handleUserJoined = (incoming: UserResponse) => {
+      queryClient.setQueryData<UserResponse[] | undefined>(
+        USERS_QUERY_KEY,
+        (current) => {
+          if (!current) {
+            queryClient.invalidateQueries({ queryKey: USERS_QUERY_KEY })
+            return current
+          }
+          if (current.some((entry) => entry.id === incoming.id)) {
+            return current
+          }
+          return [...current, incoming]
+        }
+      )
+    }
+
     const connect = () => {
       if (cancelled) return
       const next = new WebSocket(buildWebSocketUrl())
@@ -70,6 +88,8 @@ export function useFeedSocket(token: string | null): void {
           const payload = JSON.parse(event.data as string) as WebSocketServerMessage
           if (payload.type === 'message' && payload.message) {
             handleMessage(payload.message)
+          } else if (payload.type === 'user_joined' && payload.user) {
+            handleUserJoined(payload.user)
           }
         } catch {
           // Ignore malformed frames

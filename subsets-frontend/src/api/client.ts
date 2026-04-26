@@ -9,10 +9,9 @@ export type FeedMessageResponse = Schemas['FeedMessageResponse']
 export type FeedReplyResponse = Schemas['FeedReplyResponse']
 export type MessageResponse = Schemas['MessageResponse']
 
-export type WebSocketServerMessage = {
-  type: 'message'
-  message: FeedMessageResponse
-}
+export type WebSocketServerMessage =
+  | { type: 'message'; message: FeedMessageResponse }
+  | { type: 'user_joined'; user: UserResponse }
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'

@@ -95,6 +95,11 @@ class WebSocketMessageResponse(BaseModel):
     message: FeedMessageResponse
 
 
+class WebSocketUserJoinedResponse(BaseModel):
+    type: str
+    user: UserResponse
+
+
 class ConnectionManager:
     def __init__(self, store: ChatStore):
         self.store = store
@@ -118,6 +123,17 @@ class ConnectionManager:
                 continue
             try:
                 await websocket.send_json({"type": "message", "message": visible_message})
+            except RuntimeError:
+                stale_connections.append(websocket)
+
+        for websocket in stale_connections:
+            self.disconnect(websocket)
+
+    async def broadcast_user_joined(self, user: dict[str, Any]) -> None:
+        stale_connections: list[WebSocket] = []
+        for _, websocket in list(self.connections):
+            try:
+                await websocket.send_json({"type": "user_joined", "user": user})
             except RuntimeError:
                 stale_connections.append(websocket)
 
@@ -182,7 +198,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
         return {"status": "ok"}
 
     @app.post("/auth/register", status_code=201, response_model=TokenResponse)
-    def register(
+    async def register(
         request: RegisterRequest,
         chat_store: ChatStore = Depends(get_store),
     ) -> dict[str, Any]:
@@ -194,6 +210,7 @@ def create_app(database_path: str | Path | None = None) -> FastAPI:
             )
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        await manager.broadcast_user_joined(user)
         return token_response(user)
 
     @app.post("/auth/token", response_model=TokenResponse)
