@@ -1,0 +1,8 @@
+*.db
+*.db-shm
+*.db-wal
+*.log
+.pytest_cache/
+.pytest-tmp/
+pytest-cache-files-*/
+__pycache__/

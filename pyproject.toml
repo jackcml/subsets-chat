@@ -1,0 +1,13 @@
+[project]
+name = "subsets-chat"
+version = "0.1.0"
+description = "Backend MVP for constructive personal-set chat feeds."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.112",
+    "uvicorn>=0.30",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
